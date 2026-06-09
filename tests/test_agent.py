@@ -610,7 +610,6 @@ async def test_tool_error_is_returned_to_model_not_crashing_turn(tmp_path: Path)
     assert any("authoring without CVE context" in text for text in texts)
 
 
-
 def test_full_supervisor_graph_compiles(tmp_path: Path) -> None:
     audit = AuditLog(tmp_path / "audit.jsonl")
     model = ScriptedModel(responses=[AIMessage(content="FINISH")])

@@ -154,7 +154,9 @@ def test_derive_rule_path_requires_logsource() -> None:
 
 def test_write_derived_rule_names_file_from_content(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    rel = repo.write_derived_rule(_rule("Mimikatz Access", category="process_creation", product="windows"))
+    rel = repo.write_derived_rule(
+        _rule("Mimikatz Access", category="process_creation", product="windows")
+    )
     assert rel == "rules/windows/process_creation/proc_creation_win_mimikatz_access.yml"
     assert "Mimikatz Access" in repo.read_rule(rel)
 
@@ -175,4 +177,3 @@ def test_write_derived_rule_rejects_multi_document_yaml(tmp_path: Path) -> None:
     rule = _rule("Doc One", category="process_creation", product="windows")
     with pytest.raises(ValidationFailedError):
         repo.write_derived_rule(rule + "---\n" + rule)
-
