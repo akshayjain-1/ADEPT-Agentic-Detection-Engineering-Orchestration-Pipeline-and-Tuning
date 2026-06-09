@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --group dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check adept tests
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check adept tests
+
+      - name: Mypy (types)
+        run: uv run mypy adept
+
+      - name: Pytest
+        run: uv run pytest -q
+
+      - name: Validate Sigma rules (detection-as-code)
+        run: |
+          set -e
+          find sigma_rules/rules -name '*.yml' -print0 \
+            | xargs -0 -I{} uv run adept-dac validate "{}"
+
+      - name: Detection unit tests (TP/FP)
+        run: uv run adept-dac test sigma_rules/tests

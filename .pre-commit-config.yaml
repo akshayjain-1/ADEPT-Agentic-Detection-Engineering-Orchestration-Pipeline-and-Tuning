@@ -1,0 +1,43 @@
+# Pre-commit hooks for ADEPT. Install with:
+#   uv run pre-commit install
+# Run on demand with:
+#   uv run pre-commit run --all-files
+#
+# These reuse the exact same tools as CI (ruff, mypy, adept-dac) so local and
+# CI results stay in lock-step.
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(adept|tests)/
+      - id: ruff-format
+        files: ^(adept|tests)/
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (adept)
+        entry: uv run mypy adept
+        language: system
+        pass_filenames: false
+        files: ^adept/.*\.py$
+
+      - id: adept-dac-validate
+        name: validate Sigma rules (adept-dac)
+        entry: uv run adept-dac validate
+        language: system
+        files: ^sigma_rules/rules/.*\.yml$

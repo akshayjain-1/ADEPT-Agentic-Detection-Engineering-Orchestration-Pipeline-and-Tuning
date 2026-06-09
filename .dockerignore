@@ -1,0 +1,22 @@
+# Build context exclusions for the ADEPT image.
+.venv/
+.git/
+.github/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+data/
+logs/
+audit/
+.chroma/
+*.db
+docs/
+tests/
+sigma_rules/
+*.md
+!README.md

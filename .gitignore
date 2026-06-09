@@ -1,0 +1,54 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# ---- uv ----
+# The lock file SHOULD be committed for reproducible installs.
+# (uv.lock is intentionally NOT ignored.)
+
+# ---- Nested git repositories (managed separately) ----
+# sigma_rules/ is its own git repository (the agent clones/commits it via the
+# Sigma remote configured in ADEPT_SIGMA__REMOTE). Keep it out of the parent
+# repo so it is never tracked as an embedded repo / stray gitlink.
+sigma_rules/
+
+# ---- Tooling caches ----
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---- Secrets & local config ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# ---- Runtime data (never commit homelab data) ----
+data/
+*.db
+*.sqlite
+*.sqlite3
+.chroma/
+chroma/
+logs/
+*.log
+audit/
+.cache/
+
+# ---- Editor ----
+.idea/
+*.swp
+.DS_Store
+
+# ---- Local-only docs ----
+docs/code_review_guide.md

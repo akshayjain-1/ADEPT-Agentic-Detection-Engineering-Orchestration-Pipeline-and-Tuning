@@ -1,0 +1,45 @@
+# ADEPT services. Ollama is expected to run on the Docker host (or another
+# reachable machine); containers reach it via host.docker.internal.
+#
+#   docker compose up -d mcp-server        # start the MCP server
+#   docker compose run --rm agent          # open an interactive agent chat
+services:
+  mcp-server:
+    build: .
+    image: adept:latest
+    command: ["adept-mcp"]
+    env_file: .env
+    environment:
+      ADEPT_MCP__HOST: "0.0.0.0"
+      ADEPT_MCP__PORT: "8765"
+      ADEPT_OLLAMA__BASE_URL: "http://host.docker.internal:11434"
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./sigma_rules:/app/sigma_rules
+      - ./docs:/app/docs:ro
+      - adept-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  agent:
+    build: .
+    image: adept:latest
+    command: ["adept"]
+    env_file: .env
+    environment:
+      ADEPT_AGENT__MCP_URL: "http://mcp-server:8765/mcp"
+      ADEPT_OLLAMA__BASE_URL: "http://host.docker.internal:11434"
+    volumes:
+      - adept-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mcp-server
+    stdin_open: true
+    tty: true
+    profiles: ["agent"]
+
+volumes:
+  adept-data:

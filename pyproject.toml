@@ -1,0 +1,176 @@
+# ============================================================================
+# ADEPT — Agentic Detection Engineering Orchestration Pipeline & Tuning
+# ----------------------------------------------------------------------------
+# A local, open-source multi-agent AI Detection Engineer for a homelab SOC.
+#
+# The codebase is split into independently deployable components that may run
+# on different hosts (e.g. the MCP server on a homelab VM, the agent next to
+# the Ollama box). To keep installs lean, dependencies are grouped into
+# optional "extras". Install only what a given host needs, e.g.:
+#
+#     uv sync --extra mcp-server      # on the homelab MCP VM
+#     uv sync --extra agent           # on the host running the LLM agent
+#     uv sync --extra dac             # CI / detection-as-code only
+#     uv sync --all-extras --group dev # full developer environment
+# ============================================================================
+
+[project]
+name = "adept"
+version = "0.1.0"
+description = "Agentic Detection Engineering Orchestration Pipeline & Tuning — a local multi-agent AI detection engineer."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "ADEPT maintainers" }]
+keywords = ["detection-engineering", "sigma", "siem", "mcp", "langgraph", "security"]
+
+# --- Base dependencies: shared by every component, kept deliberately light. ---
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "structlog>=24.1",
+    "httpx>=0.27",
+    "tenacity>=8.3",
+    "rich>=13.7",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Clients used to query and deploy detections to the SIEMs.
+siem = [
+    "elasticsearch>=8.13,<9",
+    "opensearch-py>=2.6",
+    "splunk-sdk>=2.0",
+]
+
+# Sigma handling + detection-as-code conversion/validation.
+dac = [
+    "pysigma>=0.11",
+    "sigma-cli>=1.0",
+    "pysigma-backend-elasticsearch",
+    "pysigma-backend-opensearch",
+    "pysigma-backend-splunk",
+    "pysigma-pipeline-sysmon",
+    "pysigma-pipeline-windows",
+    "GitPython>=3.1",
+    "yamllint>=1.35",
+    "jsonschema>=4.21",
+    "typer>=0.12",
+]
+
+# External threat-intelligence sources.
+intel = [
+    "feedparser>=6.0",
+    "mitreattack-python>=3.0",
+]
+
+# Retrieval-augmented knowledge base (local embeddings + vector store).
+kb = [
+    "chromadb>=0.5",
+    "ollama>=0.3",
+]
+
+# Optional distributed tracing / metrics export.
+observability = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+]
+
+# MCP protocol SDK (lean; lets the server/tools be developed without the
+# heavier intel/kb stacks).
+mcp = [
+    "mcp[cli]>=1.12",
+]
+
+# The MCP server brokers all of the above to the agent.
+mcp-server = [
+    "adept[mcp,siem,dac,intel,kb]",
+]
+
+# The LangGraph multi-agent application + CLI chatbot.
+agent = [
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "langchain-ollama>=1.0",
+    "langchain-mcp-adapters>=0.2",
+    "typer>=0.12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "pre-commit>=3.5",
+]
+
+[project.scripts]
+adept = "adept.agent.cli:app"
+adept-mcp = "adept.mcp_server.server:main"
+adept-dac = "adept.detection_as_code.cli:app"
+adept-eval = "adept.eval.cli:app"
+adept-coverage = "adept.coverage.cli:app"
+adept-kb = "adept.kb.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["adept"]
+
+# ----------------------------------------------------------------------------
+# Tooling
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["adept", "tests"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I isort, B bugbear, UP pyupgrade, S bandit (security),
+# ASYNC async-correctness, RUF ruff-specific.
+select = ["E", "W", "F", "I", "B", "UP", "S", "ASYNC", "RUF"]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # function calls in argument defaults (used by typer/FastMCP)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Asserts and hardcoded "secret" literals are expected in test fixtures.
+"tests/**" = ["S101", "S105", "S106", "S107"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+exclude = ["sigma_rules/", "build/", "dist/"]
+
+# Third-party packages without type stubs get `ignore_missing_imports` overrides
+# added here as each component is introduced (keeps `warn_unused_configs` clean).
+[[tool.mypy.overrides]]
+module = [
+    "git.*",
+    "opensearchpy.*",
+    "splunklib.*",
+    "jsonschema.*",
+    "mitreattack.*",
+    "feedparser.*",
+    "langgraph.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra -q"
