@@ -850,12 +850,3 @@ This README is self-contained. For deeper dives, the `docs/` folder has:
   (fill it in for your environment).
 - [`SETUP_CHECKLIST.md`](SETUP_CHECKLIST.md) — the ordered operator go-live
   runbook.
-
----
-
-## 19. License
-
-MIT — see [`LICENSE`](LICENSE).
-
-> ADEPT integrates with third-party tools that carry their own licenses (e.g.
-> DeTT&CT is GPL-3.0 and is invoked as an external CLI, not imported).
