@@ -52,7 +52,7 @@ class Notifier:
         if backend == "ntfy":
             headers = {"Title": title, "Priority": _ntfy_priority(level)}
             if self._settings.token:
-                headers["Authorization"] = f"Bearer {self._settings.token}"
+                headers["Authorization"] = f"Bearer {self._settings.token.get_secret_value()}"
             url = self._settings.url.rstrip("/")
             if self._settings.topic:
                 url = f"{url}/{self._settings.topic}"
@@ -69,7 +69,7 @@ class Notifier:
         elif backend == "webhook":
             headers = {}
             if self._settings.token:
-                headers["Authorization"] = f"Bearer {self._settings.token}"
+                headers["Authorization"] = f"Bearer {self._settings.token.get_secret_value()}"
             resp = await client.post(
                 self._settings.url,
                 json={"title": title, "message": message, "level": level},

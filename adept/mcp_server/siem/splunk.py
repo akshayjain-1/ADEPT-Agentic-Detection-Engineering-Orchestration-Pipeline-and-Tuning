@@ -89,10 +89,10 @@ class SplunkBackend(SiemBackend):
             "verify": self._settings.verify,
         }
         if self._settings.token:
-            kwargs["token"] = self._settings.token
+            kwargs["token"] = self._settings.token.get_secret_value()
         else:
             kwargs["username"] = self._settings.username
-            kwargs["password"] = self._settings.password
+            kwargs["password"] = self._settings.password.get_secret_value()
         return splunk_client.connect(**kwargs)
 
     def search(

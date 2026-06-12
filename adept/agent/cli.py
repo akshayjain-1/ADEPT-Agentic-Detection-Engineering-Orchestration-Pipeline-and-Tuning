@@ -159,6 +159,14 @@ def _render_progress(event: ProgressEvent) -> None:
     elif event.kind == "specialist" and event.tools:
         used = ", ".join(dict.fromkeys(event.tools))
         console.print(f"   [dim]• {event.label} used {used}[/]")
+    elif event.kind == "evaluate":
+        if event.label.startswith("regenerate:"):
+            spec = event.label.split(":", 1)[1]
+            console.print(f"   [yellow]• review flagged issues; asking {spec} to revise[/]")
+        elif event.label == "escalated":
+            console.print("   [yellow]• review issues unresolved; see notes above[/]")
+        else:  # passed
+            console.print("   [dim]• review passed[/]")
 
 
 def _print_response(result: dict[str, Any]) -> None:

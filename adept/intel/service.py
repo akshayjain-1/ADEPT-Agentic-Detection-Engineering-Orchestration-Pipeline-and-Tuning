@@ -52,7 +52,7 @@ class IntelService:
             nvd=NVDClient(
                 nvd_http,
                 base_url=intel.nvd_url,
-                api_key=intel.nvd_api_key,
+                api_key=intel.nvd_api_key.get_secret_value(),
                 ttl_seconds=intel.cache_ttl_seconds,
             ),
             kev=KEVClient(shared_http, url=intel.kev_url, ttl_seconds=intel.cache_ttl_seconds),

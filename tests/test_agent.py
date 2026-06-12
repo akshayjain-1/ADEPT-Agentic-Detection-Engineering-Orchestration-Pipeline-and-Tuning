@@ -610,6 +610,209 @@ async def test_tool_error_is_returned_to_model_not_crashing_turn(tmp_path: Path)
     assert any("authoring without CVE context" in text for text in texts)
 
 
+# ---------------------------------------------------------------------------
+# Output guardrails: lint middleware and the evaluator (critic) node
+# ---------------------------------------------------------------------------
+
+
+class _BackendSearchArgs(BaseModel):
+    backend: str
+    query: str
+
+
+def _make_recording_search_tool(calls: list[str]) -> StructuredTool:
+    """A siem_search tool that records every query it is actually asked to run."""
+
+    async def _search(backend: str, query: str) -> str:
+        calls.append(query)
+        return "no results"
+
+    return StructuredTool.from_function(
+        coroutine=_search,
+        name="siem_search",
+        description="Search the SIEM (read-only).",
+        args_schema=_BackendSearchArgs,
+        infer_schema=False,
+    )
+
+
+def _guardrail_settings(*, lint: bool, evaluate: bool, max_retries: int = 2) -> Settings:
+    """Settings with the lint middleware and/or evaluator node toggled for a test."""
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    settings.agent.lint_enabled = lint
+    settings.agent.eval_enabled = evaluate
+    settings.agent.eval_max_retries = max_retries
+    settings.agent.llm_judge_enabled = False  # keep the model-call sequence deterministic
+    return settings
+
+
+def _rule_author_spec() -> SpecialistSpec:
+    return SpecialistSpec(
+        name="rule_author",
+        title="Detection Rule Author",
+        description="Authors detection rules.",
+        system_prompt="Author detection rules.",
+        tool_names=frozenset({"siem_search"}),
+    )
+
+
+async def test_lint_middleware_refuses_illegal_spl_before_execution(tmp_path: Path) -> None:
+    # With lint enabled, a tool call carrying an illegal SPL command (a search that
+    # pipes into `| delete`) must be refused at submission and returned to the
+    # specialist as an error, WITHOUT the underlying tool ever running.
+    calls: list[str] = []
+    spec = SpecialistSpec(
+        name="hunt_analyst",
+        title="Threat Hunter",
+        description="Hunts across the SIEM.",
+        system_prompt="Hunt for threats.",
+        tool_names=frozenset({"siem_search"}),
+    )
+    script: list[BaseMessage] = [
+        AIMessage(content="hunt_analyst"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "siem_search",
+                    "args": {"backend": "splunk", "query": "index=main | delete"},
+                    "id": "s1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content="Understood; I will not run a destructive search.", name="hunt_analyst"),
+        AIMessage(content="FINISH"),
+    ]
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    graph = build_supervisor_graph(
+        ScriptedModel(responses=script),
+        [_make_recording_search_tool(calls)],
+        audit=audit,
+        dangerous=set(),
+        specialists=(spec,),
+        checkpointer=InMemorySaver(),
+        settings=_guardrail_settings(lint=True, evaluate=False),
+    )
+    config = {"configurable": {"thread_id": "t-lint"}}
+
+    result = await graph.ainvoke({"messages": [HumanMessage(content="clean up main")]}, config)
+
+    assert "__interrupt__" not in result
+    assert calls == []  # the illegal search never reached the tool
+    tool_messages = [m for m in result["messages"] if m.type == "tool"]
+    assert any(
+        "refused by output guardrails" in message_text(m)
+        and getattr(m, "status", None) == "error"
+        for m in tool_messages
+    )
+    texts = [message_text(m) for m in result["messages"]]
+    assert any("will not run a destructive search" in text for text in texts)
+
+
+async def test_evaluator_regenerates_then_passes(tmp_path: Path) -> None:
+    # With the evaluator enabled (and lint middleware off, to isolate it), a final
+    # answer containing an illegal SPL block is sent back to the same specialist
+    # with a critique; the corrected answer then passes and the turn finishes.
+    bad = "Here is the search:\n\n```spl\nindex=main | delete\n```"
+    good = "Corrected:\n\n```spl\nindex=main sourcetype=auth | stats count by user\n```"
+    script: list[BaseMessage] = [
+        AIMessage(content="rule_author"),  # supervisor routes
+        AIMessage(content=bad, name="rule_author"),  # attempt 1 (rejected)
+        AIMessage(content=good, name="rule_author"),  # attempt 2 (clean)
+        AIMessage(content="FINISH"),  # supervisor finishes
+    ]
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    graph = build_supervisor_graph(
+        ScriptedModel(responses=script),
+        [_make_search_tool()],
+        audit=audit,
+        dangerous=set(),
+        specialists=(_rule_author_spec(),),
+        checkpointer=InMemorySaver(),
+        settings=_guardrail_settings(lint=False, evaluate=True),
+    )
+    config = {"configurable": {"thread_id": "t-eval-regen"}}
+
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="write a search")]}, config
+    )
+
+    assert result["next"] == FINISH
+    events = [entry["event"] for entry in audit.entries()]
+    assert "eval_regenerate" in events
+    assert "eval_escalation" not in events
+    # The evaluator injected feedback as a named HumanMessage, and the corrected
+    # SPL is present while the illegal `| delete` answer was sent back.
+    assert any(getattr(m, "name", None) == "evaluator_feedback" for m in result["messages"])
+    texts = [message_text(m) for m in result["messages"]]
+    assert any("stats count by user" in text for text in texts)
+
+
+async def test_evaluator_escalates_after_retry_budget(tmp_path: Path) -> None:
+    # When a specialist keeps emitting blocking output, the evaluator regenerates
+    # up to eval_max_retries and then surfaces the work to the human with a note
+    # instead of looping forever.
+    bad = "```spl\nindex=main | delete\n```"
+    script: list[BaseMessage] = [
+        AIMessage(content="rule_author"),  # supervisor routes
+        AIMessage(content=bad, name="rule_author"),  # attempt 1 (rejected)
+        AIMessage(content=bad, name="rule_author"),  # attempt 2 (still bad -> escalate)
+        AIMessage(content="FINISH"),  # supervisor finishes
+    ]
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    graph = build_supervisor_graph(
+        ScriptedModel(responses=script),
+        [_make_search_tool()],
+        audit=audit,
+        dangerous=set(),
+        specialists=(_rule_author_spec(),),
+        checkpointer=InMemorySaver(),
+        settings=_guardrail_settings(lint=False, evaluate=True, max_retries=1),
+    )
+    config = {"configurable": {"thread_id": "t-eval-escalate"}}
+
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="write a search")]}, config
+    )
+
+    assert result["next"] == FINISH
+    events = [entry["event"] for entry in audit.entries()]
+    assert "eval_escalation" in events
+    # The escalation note is surfaced as an evaluator-authored message.
+    assert any(
+        getattr(m, "name", None) == "evaluator" and "could not clear" in message_text(m)
+        for m in result["messages"]
+    )
+
+
+def test_evaluator_graph_has_evaluator_node_only_with_settings(tmp_path: Path) -> None:
+    # The evaluator node is wired in only when settings enable it; without
+    # settings the graph keeps its plain supervisor -> specialist shape so the
+    # offline tests and existing behaviour are unaffected.
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    plain = build_supervisor_graph(
+        ScriptedModel(responses=[AIMessage(content="FINISH")]),
+        [_make_search_tool()],
+        audit=audit,
+        dangerous=set(),
+        specialists=(_rule_author_spec(),),
+        checkpointer=InMemorySaver(),
+    )
+    assert "evaluator" not in set(plain.get_graph().nodes)
+
+    with_eval = build_supervisor_graph(
+        ScriptedModel(responses=[AIMessage(content="FINISH")]),
+        [_make_search_tool()],
+        audit=audit,
+        dangerous=set(),
+        specialists=(_rule_author_spec(),),
+        checkpointer=InMemorySaver(),
+        settings=_guardrail_settings(lint=False, evaluate=True),
+    )
+    assert "evaluator" in set(with_eval.get_graph().nodes)
+
+
 def test_full_supervisor_graph_compiles(tmp_path: Path) -> None:
     audit = AuditLog(tmp_path / "audit.jsonl")
     model = ScriptedModel(responses=[AIMessage(content="FINISH")])

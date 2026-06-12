@@ -1,8 +1,8 @@
 # ADEPT — Setup & Go-Live Checklist
 
 > The ADEPT codebase is complete and verified **offline** (lint + strict types +
-> 179 tests green). This document is the remaining **operator** work to connect
-> it to your homelab and bring it online. Work top to bottom — later steps
+> the full test suite green). This document is the remaining **operator** work to
+> connect it to your homelab and bring it online. Work top to bottom — later steps
 > depend on earlier ones.
 
 **Tags:** items are required unless marked **[optional]**. **[VCS]** marks a

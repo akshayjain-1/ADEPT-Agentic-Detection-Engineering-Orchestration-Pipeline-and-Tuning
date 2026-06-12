@@ -22,13 +22,16 @@ from langgraph.types import Command
 
 from adept.agent.approval import guard_tools
 from adept.agent.specialists import SPECIALISTS, SpecialistSpec
-from adept.agent.state import SupervisorState
+from adept.agent.state import EVALUATOR_FEEDBACK_NAME, SupervisorState
+from adept.guardrails import lint_tool_input
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from langchain_core.tools import BaseTool
 
     from adept.agent.audit import AuditLog
+    from adept.config.settings import Settings
+    from adept.guardrails.models import LintReport
 
 FINISH = "FINISH"
 
@@ -121,9 +124,15 @@ def _routing_digest(messages: Sequence[AnyMessage]) -> str:
     prompt, biasing the router toward whichever specialist dominated the history
     regardless of what the user just asked.
     """
+    # Evaluator-injected regeneration feedback is also a HumanMessage; it must
+    # never be mistaken for the user's request, so those turns are skipped when
+    # locating the current and earlier requests.
     last_human = -1
     for index, message in enumerate(messages):
-        if getattr(message, "type", "") == "human":
+        if (
+            getattr(message, "type", "") == "human"
+            and getattr(message, "name", None) != EVALUATOR_FEEDBACK_NAME
+        ):
             last_human = index
 
     current_request = "(none provided)"
@@ -134,7 +143,10 @@ def _routing_digest(messages: Sequence[AnyMessage]) -> str:
             or "(none provided)"
         )
         for message in messages[:last_human]:
-            if getattr(message, "type", "") == "human":
+            if (
+                getattr(message, "type", "") == "human"
+                and getattr(message, "name", None) != EVALUATOR_FEEDBACK_NAME
+            ):
                 text = _snippet(message_text(message), _ROUTING_SNIPPET_CHARS)
                 if text:
                     earlier_requests.append(text)
@@ -269,6 +281,66 @@ class _ToolErrorRecoveryMiddleware(AgentMiddleware):
 _TOOL_ERROR_RECOVERY = _ToolErrorRecoveryMiddleware()
 
 
+class _OutputLintMiddleware(AgentMiddleware):
+    """Refuse tool calls whose arguments fail a deterministic guardrail lint.
+
+    Before a tool runs, its arguments are vetted by :func:`lint_tool_input`
+    (illegal SPL such as ``| delete``, malformed Sigma, writes to a protected
+    branch, ...). A call with any blocking finding is converted into an
+    ``error`` :class:`ToolMessage` that explains the problem and is *not*
+    executed, so the specialist sees the refusal and self-corrects on its next
+    step. Non-lintable tools and clean calls pass straight through. The approval
+    gate's ``GraphBubbleUp`` interrupt is never raised before the tool runs, so
+    nothing extra is needed to preserve it here.
+    """
+
+    def __init__(
+        self, *, protected_branches: Sequence[str], spl_denylist: Sequence[str]
+    ) -> None:
+        super().__init__()
+        self._protected = tuple(protected_branches)
+        self._spl_denylist = list(spl_denylist) or None
+
+    def _refusal(self, request: ToolCallRequest, report: LintReport) -> ToolMessage:
+        return ToolMessage(
+            content=(
+                f"Tool {request.tool_call['name']!r} was refused by output guardrails "
+                f"and did not run. Fix these problems, then try again:\n{report.summary()}"
+            ),
+            tool_call_id=request.tool_call["id"],
+            status="error",
+        )
+
+    def _blocking_report(self, request: ToolCallRequest) -> LintReport | None:
+        report = lint_tool_input(
+            request.tool_call["name"],
+            request.tool_call.get("args") or {},
+            protected_branches=self._protected,
+            spl_denylist=self._spl_denylist,
+        )
+        return report if report is not None and not report.ok else None
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        report = self._blocking_report(request)
+        if report is not None:
+            return self._refusal(request, report)
+        return handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        report = self._blocking_report(request)
+        if report is not None:
+            return self._refusal(request, report)
+        return await handler(request)
+
+
 def build_specialist_agents(
     model: BaseChatModel,
     tools: list[BaseTool],
@@ -276,10 +348,26 @@ def build_specialist_agents(
     *,
     audit: AuditLog,
     dangerous: set[str],
+    lint_enabled: bool = False,
+    protected_branches: Sequence[str] = (),
+    spl_denylist: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """Build one tool-calling agent per specialist with role-scoped tools."""
+    """Build one tool-calling agent per specialist with role-scoped tools.
+
+    When ``lint_enabled`` is set, an :class:`_OutputLintMiddleware` is layered
+    outside the error-recovery middleware so guardrail-violating tool inputs are
+    refused before they execute.
+    """
     guarded = guard_tools(tools, dangerous, audit=audit)
     by_name = {tool.name: tool for tool in guarded}
+    middleware: list[AgentMiddleware] = [_TOOL_ERROR_RECOVERY]
+    if lint_enabled:
+        middleware.insert(
+            0,
+            _OutputLintMiddleware(
+                protected_branches=protected_branches, spl_denylist=spl_denylist
+            ),
+        )
     agents: dict[str, Any] = {}
     for spec in specialists:
         subset = [by_name[name] for name in spec.tool_names if name in by_name]
@@ -288,7 +376,7 @@ def build_specialist_agents(
             tools=subset,
             system_prompt=spec.system_prompt,
             name=spec.name,
-            middleware=[_TOOL_ERROR_RECOVERY],
+            middleware=middleware,
         )
     return agents
 
@@ -301,9 +389,36 @@ def build_supervisor_graph(
     dangerous: set[str],
     specialists: Sequence[SpecialistSpec] = SPECIALISTS,
     checkpointer: Any = None,
+    settings: Settings | None = None,
 ) -> Any:
-    """Assemble and compile the supervisor + specialist graph."""
-    agents = build_specialist_agents(model, tools, specialists, audit=audit, dangerous=dangerous)
+    """Assemble and compile the supervisor + specialist graph.
+
+    When ``settings`` is provided, its ``agent.lint_enabled`` /
+    ``agent.eval_enabled`` flags turn on the submit-time lint middleware and the
+    evaluator (critic) node. Called without ``settings`` (as in unit tests), the
+    graph keeps its plain supervisor -> specialist -> supervisor shape.
+    """
+    if settings is not None:
+        lint_enabled = settings.agent.lint_enabled
+        eval_enabled = settings.agent.eval_enabled
+        protected_branches: tuple[str, ...] = tuple(settings.sigma.protected_branches)
+        spl_denylist: tuple[str, ...] = tuple(settings.agent.spl_denylist)
+    else:
+        lint_enabled = False
+        eval_enabled = False
+        protected_branches = ()
+        spl_denylist = ()
+
+    agents = build_specialist_agents(
+        model,
+        tools,
+        specialists,
+        audit=audit,
+        dangerous=dangerous,
+        lint_enabled=lint_enabled,
+        protected_branches=protected_branches,
+        spl_denylist=spl_denylist,
+    )
     builder = StateGraph(SupervisorState)
     # ``add_node``'s overloads can't infer NodeInputT for an async TypedDict-state
     # node, so cast the node; the supervisor signature is enforced by SupervisorNode.
@@ -311,9 +426,35 @@ def build_supervisor_graph(
     routes: dict[Hashable, str] = {}
     for spec in specialists:
         builder.add_node(spec.name, agents[spec.name])
-        builder.add_edge(spec.name, "supervisor")
         routes[spec.name] = spec.name
     routes[FINISH] = END
+
+    if eval_enabled and settings is not None:
+        # Each specialist hands off to the evaluator, which lints the output and
+        # either routes the work back to that same specialist for regeneration
+        # or forwards to the supervisor once it is clean (or retries are spent).
+        from adept.agent.evaluator import SUPERVISOR_TARGET, make_evaluator_node
+
+        builder.add_node(
+            "evaluator",
+            cast(
+                Any,
+                make_evaluator_node(model, specialists, settings=settings, audit=audit),
+            ),
+        )
+        for spec in specialists:
+            builder.add_edge(spec.name, "evaluator")
+        eval_routes: dict[Hashable, str] = {spec.name: spec.name for spec in specialists}
+        eval_routes[SUPERVISOR_TARGET] = "supervisor"
+        builder.add_conditional_edges(
+            "evaluator",
+            lambda state: state.get("eval_route") or SUPERVISOR_TARGET,
+            eval_routes,
+        )
+    else:
+        for spec in specialists:
+            builder.add_edge(spec.name, "supervisor")
+
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges("supervisor", lambda state: state["next"], routes)
     return builder.compile(checkpointer=checkpointer)

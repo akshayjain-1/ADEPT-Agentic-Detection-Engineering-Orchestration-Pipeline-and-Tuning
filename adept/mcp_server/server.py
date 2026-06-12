@@ -39,7 +39,7 @@ def build_server(settings: Settings) -> FastMCP:
     verifier: StaticTokenVerifier | None = None
     auth: AuthSettings | None = None
     if settings.mcp.auth_token:
-        verifier = StaticTokenVerifier(settings.mcp.auth_token)
+        verifier = StaticTokenVerifier(settings.mcp.auth_token.get_secret_value())
         auth = AuthSettings(
             issuer_url=settings.mcp.public_url,
             resource_server_url=settings.mcp.public_url,

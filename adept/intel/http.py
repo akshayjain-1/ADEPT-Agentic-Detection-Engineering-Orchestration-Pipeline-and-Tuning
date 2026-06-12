@@ -4,7 +4,12 @@ Centralises the cross-cutting concerns for every outbound intel request:
 
 * **SSRF guard** — only hosts on the configured allowlist may be fetched, and
   only over ``http``/``https``. This matters because some sources (RSS feeds)
-  are user-configurable.
+  are user-configurable. The check is **host-based**: it validates the URL's
+  hostname against the allowlist but does not pin the resolved IP, so on its own
+  it does not stop DNS rebinding (an allowlisted name re-resolving to a private
+  address). That residual risk is accepted here because the default allowlist is
+  a small set of fixed *public* intel endpoints and redirects are disabled;
+  operators who add internal sources should keep that limitation in mind.
 * **Caching** — responses are cached to disk with a TTL so repeated lookups are
   fast and the system tolerates upstream outages and rate limits.
 * **Rate limiting** — an optional blocking token-bucket throttles a source

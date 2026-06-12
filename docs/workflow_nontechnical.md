@@ -7,8 +7,9 @@
 
 ADEPT is an AI assistant that helps defend your network. It reads your security
 logs, notices what kinds of attacks you can and can't currently detect, writes
-new detection rules to close the gaps, tests them so they don't cry wolf, and —
-**only after you approve** — turns them on in your security monitoring system.
+new detection rules to close the gaps, tests them so they don't cry wolf,
+double-checks its own work automatically, and — **only after you approve** —
+turns them on in your security monitoring system.
 
 Think of it as a tireless junior detection engineer that does the research and
 the legwork, then hands you the finished work for a sign-off.
@@ -33,7 +34,9 @@ other, coordinated by a manager:
 flowchart LR
     A[New threat or gap spotted] --> B[Hunt through logs]
     B --> C[Write a detection rule]
-    C --> D[Validate & translate to your SIEMs]
+    C --> R{Automatic self-check}
+    R -- Problem found --> C
+    R -- Looks good --> D[Validate & translate to your SIEMs]
     D --> E[Backtest: would it cause false alarms?]
     E --> F[Purple-team: simulate the attack & check it fires]
     F --> G{You approve?}
@@ -48,18 +51,25 @@ flowchart LR
    visible and to understand what "normal" looks like.
 3. **Author.** A rule is written in Sigma — a vendor-neutral format — so it can
    target any of your security tools.
-4. **Validate & translate.** The rule is checked for correctness and converted
+4. **Self-check.** Before anything goes further, ADEPT automatically inspects its
+   own work for mistakes — a search that could delete data, a half-finished rule,
+   a placeholder left where a real value belongs. Anything serious is handed
+   straight back to the rule writer to fix and try again, so the work you
+   eventually see has already passed an automated review. (If it can't get it
+   right after a couple of tries, it stops and flags the problem for you rather
+   than guessing.)
+5. **Validate & translate.** The rule is checked for correctness and converted
    to the exact query language of each SIEM you run.
-5. **Backtest.** ADEPT estimates how noisy the rule would be against historical
+6. **Backtest.** ADEPT estimates how noisy the rule would be against historical
    logs, so you don't get flooded with false alarms.
-6. **Purple-team check.** ADEPT safely simulates the attack — either by handing
+7. **Purple-team check.** ADEPT safely simulates the attack — either by handing
    you a ready-to-run test (it never runs these itself) or, with your approval,
    driving a lab attack tool — then watches your logs to confirm the new
    detection actually fires. Anything missed becomes a tuning task.
-7. **You approve.** Nothing is deployed — and no attack simulation is ever run —
+8. **You approve.** Nothing is deployed — and no attack simulation is ever run —
    without your explicit go-ahead. You see the full rule, the translated
    queries, the noise estimate, and the trade-offs.
-8. **Deploy & maintain.** Once live, ADEPT keeps an eye on the rule and proposes
+9. **Deploy & maintain.** Once live, ADEPT keeps an eye on the rule and proposes
    tuning, and can roll it back if needed.
 
 ## How you talk to it
@@ -83,6 +93,13 @@ wants to do. You can **approve** it, **edit** the details first, **reject** it,
 or **ask for changes** in your own words. Nothing happens until you choose.
 Every decision is written to an audit log, so there's always a record of what
 was changed, by whom, and why.
+
+There's also an automatic safety net *before* those gates: ADEPT checks its own
+output with a set of fixed rules (for example, it will not let a search that
+could delete data run, and it won't accept a detection rule that's missing key
+details). Problems are caught and fixed by the team itself, so fewer mistakes
+ever reach you — and the ones it can't fix are flagged plainly instead of being
+quietly shipped.
 
 ## What you get out of it
 

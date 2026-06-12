@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # A list parsed from a comma-separated environment string (JSON decoding off).
@@ -41,7 +41,7 @@ class MCPSettings(BaseModel):
     port: int = 8765
     path: str = "/mcp"
     transport: Literal["streamable-http", "sse", "stdio"] = "streamable-http"
-    auth_token: str = ""
+    auth_token: SecretStr = SecretStr("")
     public_url: str = "http://localhost:8765/mcp"
 
 
@@ -61,9 +61,9 @@ class ELKSettings(BaseModel):
 
     enabled: bool = True
     url: str = "https://localhost:9200"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
     username: str = ""
-    password: str = ""
+    password: SecretStr = SecretStr("")
     verify_certs: bool = True
     ca_cert: str = ""
     default_index: str = "logs-*"
@@ -79,7 +79,7 @@ class OpenSearchSettings(BaseModel):
     enabled: bool = False
     url: str = "https://localhost:9200"
     username: str = "admin"
-    password: str = ""
+    password: SecretStr = SecretStr("")
     verify_certs: bool = True
     ca_cert: str = ""
     default_index: str = "wazuh-alerts-*"
@@ -92,8 +92,8 @@ class SplunkSettings(BaseModel):
     host: str = "localhost"
     port: int = 8089
     username: str = ""
-    password: str = ""
-    token: str = ""
+    password: SecretStr = SecretStr("")
+    token: SecretStr = SecretStr("")
     scheme: Literal["http", "https"] = "https"
     verify: bool = True
     default_index: str = "main"
@@ -113,7 +113,7 @@ class SigmaRepoSettings(BaseModel):
 class IntelSettings(BaseModel):
     """External threat-intelligence sources."""
 
-    nvd_api_key: str = ""
+    nvd_api_key: SecretStr = SecretStr("")
     nvd_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     kev_url: str = (
         "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -185,7 +185,7 @@ class NotifySettings(BaseModel):
     backend: Literal["none", "ntfy", "discord", "slack", "webhook"] = "none"
     url: str = ""
     topic: str = ""
-    token: str = ""
+    token: SecretStr = SecretStr("")
 
 
 class AttackSimSettings(BaseModel):
@@ -205,7 +205,7 @@ class AttackSimSettings(BaseModel):
     atomic_path: str = ""
     caldera_enabled: bool = False
     caldera_url: str = ""
-    caldera_api_key: str = ""
+    caldera_api_key: SecretStr = SecretStr("")
     # HTTP header Caldera expects the API key in (Caldera's default is "KEY").
     caldera_api_key_header: str = "KEY"
     # Deployment-specific ids used when creating an operation; tune per server.
@@ -221,7 +221,7 @@ class AgentSettings(BaseModel):
     """LangGraph agent runtime (runs next to Ollama)."""
 
     mcp_url: str = "http://localhost:8765/mcp"
-    mcp_token: str = ""
+    mcp_token: SecretStr = SecretStr("")
     mcp_timeout_seconds: int = 30
     # Empty model falls back to the shared Ollama model.
     model: str = ""
@@ -240,8 +240,22 @@ class AgentSettings(BaseModel):
     )
     # External editor for the "edit" approval action; empty uses $VISUAL/$EDITOR.
     editor: str = ""
+    # Output guardrails. ``lint_enabled`` refuses illegal tool inputs (e.g. SPL
+    # that pipes into ``| delete``) at submission; ``eval_enabled`` inserts the
+    # evaluator node that lints each specialist's output and routes it back for
+    # regeneration (up to ``eval_max_retries`` times) before escalating to the
+    # human. ``llm_judge_enabled`` adds an optional, slower semantic critique.
+    lint_enabled: bool = True
+    eval_enabled: bool = True
+    eval_max_retries: int = 2
+    llm_judge_enabled: bool = False
+    # Optional override of the built-in dangerous-SPL-command denylist (a
+    # best-effort backstop behind the human approval gate); empty keeps the
+    # built-in default. Add names here to also refuse argument-dependent
+    # commands such as ``rest`` or ``map``.
+    spl_denylist: CsvList = Field(default_factory=list)
 
-    _split = field_validator("dangerous_tools", mode="before")(_split_csv)
+    _split = field_validator("dangerous_tools", "spl_denylist", mode="before")(_split_csv)
 
 
 class OTelSettings(BaseModel):

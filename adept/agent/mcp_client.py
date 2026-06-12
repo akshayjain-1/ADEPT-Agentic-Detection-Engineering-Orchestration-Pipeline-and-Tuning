@@ -22,7 +22,9 @@ def build_connection(settings: Settings) -> StreamableHttpConnection:
         "timeout": timedelta(seconds=settings.agent.mcp_timeout_seconds),
     }
     if settings.agent.mcp_token:
-        connection["headers"] = {"Authorization": f"Bearer {settings.agent.mcp_token}"}
+        connection["headers"] = {
+            "Authorization": f"Bearer {settings.agent.mcp_token.get_secret_value()}"
+        }
     return connection
 
 

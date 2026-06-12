@@ -71,9 +71,12 @@ class ELKBackend(SiemBackend):
         if self._settings.ca_cert:
             kwargs["ca_certs"] = self._settings.ca_cert
         if self._settings.api_key:
-            kwargs["api_key"] = self._settings.api_key
+            kwargs["api_key"] = self._settings.api_key.get_secret_value()
         elif self._settings.username:
-            kwargs["basic_auth"] = (self._settings.username, self._settings.password)
+            kwargs["basic_auth"] = (
+                self._settings.username,
+                self._settings.password.get_secret_value(),
+            )
         return Elasticsearch(**kwargs)
 
     def search(
@@ -153,10 +156,12 @@ class ELKBackend(SiemBackend):
             )
         headers = {"kbn-xsrf": "true", "Content-Type": "application/json"}
         if self._settings.api_key:
-            headers["Authorization"] = f"ApiKey {self._settings.api_key}"
+            headers["Authorization"] = f"ApiKey {self._settings.api_key.get_secret_value()}"
         auth = None
         if not self._settings.api_key and self._settings.username:
-            auth = httpx.BasicAuth(self._settings.username, self._settings.password)
+            auth = httpx.BasicAuth(
+                self._settings.username, self._settings.password.get_secret_value()
+            )
         verify: bool | str = self._settings.ca_cert or self._settings.verify_certs
         return httpx.Client(
             base_url=self._settings.kibana_url.rstrip("/"),

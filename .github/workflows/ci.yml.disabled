@@ -37,7 +37,7 @@ jobs:
       - name: Mypy (types)
         run: uv run mypy adept
 
-      - name: Pytest
+      - name: Pytest (with coverage)
         run: uv run pytest -q
 
       - name: Validate Sigma rules (detection-as-code)

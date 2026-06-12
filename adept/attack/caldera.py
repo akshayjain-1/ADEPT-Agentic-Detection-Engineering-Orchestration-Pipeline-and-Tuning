@@ -53,7 +53,7 @@ class CalderaClient:
         base = settings.caldera_url.rstrip("/")
         return cls(
             base_url=f"{base}/api/v2" if base else "",
-            api_key=settings.caldera_api_key,
+            api_key=settings.caldera_api_key.get_secret_value(),
             enabled=settings.caldera_enabled,
             header_name=settings.caldera_api_key_header or "KEY",
             planner_id=settings.caldera_planner_id,

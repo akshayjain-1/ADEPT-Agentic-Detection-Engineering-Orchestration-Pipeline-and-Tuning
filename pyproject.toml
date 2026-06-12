@@ -103,6 +103,7 @@ agent = [
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "ruff>=0.5",
     "mypy>=1.10",
     "types-PyYAML",
@@ -146,7 +147,10 @@ ignore = [
 "tests/**" = ["S101", "S105", "S106", "S107"]
 
 [tool.mypy]
-python_version = "3.12"
+# Type-check against the minimum supported interpreter (matches ruff's
+# target-version and the 3.11 floor in ``requires-python``), so any accidental
+# use of a 3.12-only API is caught even though dev and CI run on 3.12.
+python_version = "3.11"
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
@@ -173,4 +177,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra -q"
+# Coverage is reported for visibility only — there is intentionally no
+# `--cov-fail-under` gate so the suite never fails purely on a coverage dip.
+addopts = "-ra -q --cov=adept --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["adept"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true

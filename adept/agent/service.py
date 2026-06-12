@@ -27,6 +27,9 @@ InterruptHandler = Callable[[dict[str, Any]], Awaitable["ApprovalDecision"]]
 #: Internal node that picks the next specialist; not a user-facing stage.
 _SUPERVISOR_NODE = "supervisor"
 
+#: Internal node that lints a specialist's output and may loop it back.
+_EVALUATOR_NODE = "evaluator"
+
 
 @dataclass(slots=True)
 class ProgressEvent:
@@ -35,7 +38,9 @@ class ProgressEvent:
     ``kind`` is ``"route"`` when the supervisor delegates to a specialist
     (``label`` is that specialist, or ``"FINISH"`` when the turn is wrapping up)
     or ``"specialist"`` when a specialist finishes a step (``tools`` lists the
-    tools it called, in order).
+    tools it called, in order). ``kind`` is ``"evaluate"`` when the critic node
+    reviews a specialist's output (``label`` is ``"passed"``,
+    ``"regenerate:<specialist>"``, or ``"escalated"``).
     """
 
     kind: str
@@ -53,6 +58,17 @@ def _progress_from_update(update: dict[str, Any]) -> Iterator[ProgressEvent]:
             nxt = value.get("next") if isinstance(value, dict) else None
             if nxt:
                 yield ProgressEvent(kind="route", label=str(nxt))
+        elif node == _EVALUATOR_NODE and isinstance(value, dict):
+            route = value.get("eval_route")
+            messages = value.get("messages") or []
+            escalated = any(getattr(m, "name", None) == _EVALUATOR_NODE for m in messages)
+            if route and route != _SUPERVISOR_NODE:
+                label = f"regenerate:{route}"
+            elif escalated:
+                label = "escalated"
+            else:
+                label = "passed"
+            yield ProgressEvent(kind="evaluate", label=label)
         elif isinstance(value, dict):
             tools: list[str] = []
             for message in value.get("messages") or []:
@@ -151,6 +167,6 @@ async def open_agent_session(settings: Settings) -> AsyncIterator[AgentSession]:
     async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
         await saver.setup()
         graph = build_supervisor_graph(
-            model, tools, audit=audit, dangerous=dangerous, checkpointer=saver
+            model, tools, audit=audit, dangerous=dangerous, checkpointer=saver, settings=settings
         )
         yield AgentSession(app=graph, audit=audit, settings=settings)

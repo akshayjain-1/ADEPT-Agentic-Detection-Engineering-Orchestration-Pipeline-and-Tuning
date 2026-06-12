@@ -12,17 +12,27 @@ Given that context, a team of specialist agents **hunt through logs, author and
 tune Sigma rules, convert them to your specific SIEMs (detection-as-code), build
 an ATT&CK coverage matrix, and run a false-positive / false-negative review
 loop** using Atomic Red Team, MITRE Caldera, and the Adversarial Detection
-Engineering (ADE) framework. A human-in-the-loop approval gate ensures **nothing
-is deployed or executed without your explicit verification**.
+Engineering (ADE) framework. Every artifact an agent produces is vetted by
+**deterministic output guardrails** and a **dedicated evaluator (critic) node**
+that sends substandard work back for revision, and a human-in-the-loop approval
+gate ensures **nothing is deployed or executed without your explicit
+verification**.
 
 Everything runs locally: inference is served by [Ollama](https://ollama.com/),
 your logs and detections never leave the homelab, and the only outbound traffic
 is an optional, allow-listed set of threat-intel fetches.
 
 > **Status:** the platform build is complete and verified **offline** — the full
-> `ruff` + `mypy --strict` + `pytest` (179 tests) gate is green and every
+> `ruff` + `mypy --strict` + `pytest` (200+ tests) gate is green and every
 > dependency is exercised by tests or a smoke run. Connecting it to your live
 > SIEMs, Ollama, and Caldera is configuration-driven.
+>
+> **Maturity:** the ELK/Kibana path is the most exercised. The other SIEM
+> backends (Wazuh/OpenSearch, Splunk) and the optional integrations (DeTT&CT
+> coverage, OpenTelemetry tracing) are wired and unit-tested but less
+> battle-tested against live systems — validate them with the staged
+> [live-integration smoke test](docs/live_integration_smoke_test.md) before you
+> rely on them.
 
 ---
 
@@ -71,6 +81,10 @@ anything that changes your environment.
   agents (and you) what to build next.
 - **Closed-loop quality** — a purple-team agent simulates attacks and scores
   whether your detections caught them, feeding tuning back to the rule author.
+- **Self-correcting output** — deterministic linters and an evaluator node vet
+  every generated query, rule, and git operation; blocking issues (e.g. illegal
+  SPL, placeholder UUIDs) are bounced back to the specialist to fix before they
+  reach you or a tool.
 - **Safe by design** — token-authenticated MCP behind Tailscale, least-privilege
   SIEM credentials, an SSRF allow-list for intel fetches, and a human approval
   gate before any deploy or attack.
@@ -128,6 +142,7 @@ flowchart TD
         ATK[attack]
         COV[coverage]
         DAC[detection_as_code]
+        GR[guardrails]
         EVAL[eval]
     end
     subgraph L2["Layer 2 · MCP server"]
@@ -136,46 +151,82 @@ flowchart TD
         SRV[server]
     end
     subgraph L3["Layer 3 · Agent"]
-        AGENT[supervisor + specialists + CLI]
+        AGENT[supervisor + specialists + evaluator + CLI]
     end
     L0 --> L1 --> L2
     L2 -->|MCP over Tailscale| L3
     L0 --> L2
     L0 --> L3
+    GR --> AGENT
 ```
 
 **The golden rule:** `mcp_server` may import the domain packages; the domain
-packages must **never** import `mcp_server`; everything may import `config` and
-`shared`.
+packages must **never** import `mcp_server`; the `agent` imports `guardrails`;
+everything may import `config` and `shared`.
 
 ### 2.3 Supervisor ↔ specialist routing
 
 The supervisor is a *hybrid supervisor*: each turn it inspects a compact,
 turn-isolated digest of the conversation and routes to **exactly one** specialist
 (or `FINISH`). The chosen specialist runs as a tool-calling agent with only the
-MCP tools for its role, then hands control back to the supervisor, which decides
-the next hop. The loop continues until the request is satisfied.
+MCP tools for its role. Before its output flows on, a **dedicated evaluator
+(critic) node** lints what it produced; clean work proceeds to the supervisor for
+the next hop, while blocking issues are routed straight back to the same
+specialist with a concrete critique. The loop continues until the request is
+satisfied.
+
+```mermaid
+flowchart LR
+    START([turn]) --> SUP[Supervisor<br/>route on digest]
+    SUP -->|next = specialist| SPEC[Specialist 1 of 5]
+    SPEC -->|tool call| LINT{{Lint middleware<br/>vets tool input}}
+    LINT -->|clean| MCP[MCP tool]
+    LINT -->|illegal| REFUSE[Refuse + return error<br/>to specialist]
+    MCP --> SPEC
+    SPEC -->|hand back| EVAL{{Evaluator<br/>lint the hop}}
+    EVAL -->|blocking issue| SPEC2[regenerate:<br/>same specialist]
+    EVAL -->|clean / retries spent| SUP
+    SUP -->|next = FINISH| DONE([reply])
+```
+
+The evaluator hard-blocks security/syntax violations and bounces the work back
+for up to `eval_max_retries` attempts (default 2); once that budget is spent it
+surfaces the latest output to you with the unresolved issues noted rather than
+looping forever. Both the evaluator node and the submit-time lint middleware are
+config-gated (`agent.eval_enabled` / `agent.lint_enabled`, on by default).
 
 ```mermaid
 sequenceDiagram
     actor User
     participant Sup as Supervisor
     participant Spec as Specialist (1 of 5)
+    participant Lint as Lint middleware
     participant MCP as MCP Server
     participant Gate as Approval gate
+    participant Eval as Evaluator
 
     User->>Sup: request (optionally @specialist)
     loop until FINISH
         Sup->>Sup: route on turn-isolated digest
         Sup->>Spec: delegate to chosen specialist
-        Spec->>MCP: call role-scoped tools
-        alt state-changing tool
-            MCP-->>Gate: interrupt for approval
-            Gate-->>User: approve / edit / reject / changes
-            User-->>Gate: decision (audited)
+        Spec->>Lint: tool call
+        alt illegal tool input
+            Lint-->>Spec: refuse (error message, not executed)
+        else clean
+            Lint->>MCP: forward tool call
+            alt state-changing tool
+                MCP-->>Gate: interrupt for approval
+                Gate-->>User: approve / edit / reject / changes
+                User-->>Gate: decision (audited)
+            end
+            MCP-->>Spec: tool results
         end
-        MCP-->>Spec: tool results
-        Spec-->>Sup: findings / hand back
+        Spec->>Eval: hand back output
+        alt blocking lint findings (within retry budget)
+            Eval-->>Spec: critique → regenerate
+        else clean or retries spent
+            Eval-->>Sup: proceed
+        end
     end
     Sup-->>User: final answer
 ```
@@ -191,7 +242,9 @@ chains across specialists.
 flowchart LR
     A[New threat or coverage gap] --> B[Hunt the logs]
     B --> C[Author Sigma rule]
-    C --> D[Validate &amp; convert to each SIEM]
+    C --> R{Automated review:<br/>lint + evaluator}
+    R -- Blocking issue --> C
+    R -- Clean --> D[Validate &amp; convert to each SIEM]
     D --> E[Unit-test TP/FP samples]
     E --> F[Backtest against history]
     F --> G[Purple-team: simulate &amp; observe]
@@ -236,6 +289,41 @@ Only **approve** and **edit** execute the tool. Every decision and every execute
 tool is appended to a JSONL **audit log**. Atomic Red Team is **propose-only** —
 ADEPT renders the command, cleanup, and expected telemetry but never runs an
 atomic; a human runs it.
+
+### Output guardrails & the evaluator
+
+The approval gate stops *you* from rubber-stamping a bad action; two further
+layers stop substandard output from ever reaching that point. Both are backed by
+the `adept/guardrails` library — pure, offline **linters** that vet each artifact
+type and return a uniform report (`error` findings block; `warning`/`info` are
+advisory):
+
+| Artifact | What the linter catches |
+| --- | --- |
+| SPL | Destructive/exfiltrating commands (`\| delete`, `outputlookup`, `sendemail`, `script`, `collect`, …), unbalanced quotes/parens, empty pipes |
+| Lucene / ES | Leading `*`/`?` wildcards (cost), match-all queries (advisory), unbalanced grouping |
+| Sigma | Validator issues, multiple YAML docs, missing/placeholder `id` (must be a real UUIDv4), missing/placeholder `title` |
+| Navigator layer | Malformed JSON, missing required fields, unknown domain, bad technique entries |
+| Git ops | Commits to a protected branch, invalid branch names, empty/oversized commit subjects |
+
+1. **Submit-time lint middleware.** Before a specialist's tool call executes, its
+   arguments are vetted. A call carrying an illegal input (e.g. a `siem_search`
+   that pipes into `| delete`, a `write_sigma_rule` with a placeholder id, a
+   `git_commit` to `main`) is **refused and returned as an error** the specialist
+   can correct from — it never runs, and never even reaches the approval gate.
+2. **Evaluator (critic) node.** After a specialist finishes a hop, a dedicated
+   graph node lints everything it actually produced — written rules, converted
+   queries, exported layers, and any query/rule fenced in the final answer. A
+   **blocking** finding is sent back to the *same* specialist with a concrete
+   critique (regenerate), up to `agent.eval_max_retries` times; once that budget
+   is spent the work is **escalated to you** with the unresolved issues attached.
+   An optional, lenient **LLM judge** (`agent.llm_judge_enabled`, off by default)
+   adds a semantic second opinion for issues the deterministic linters can't see.
+
+Every regeneration, escalation, and advisory note is written to the audit log
+(`eval_regenerate`, `eval_escalation`, `eval_advisory`). The specialist prompts
+also carry a shared guardrail preamble mirroring these linters, so the model
+usually self-corrects before the evaluator has to intervene.
 
 ---
 
@@ -385,7 +473,7 @@ $EDITOR .env
 | Knowledge base | `ADEPT_KB__` | Chroma path, collection, embed model, optional SigmaHQ ingest. |
 | Notifications | `ADEPT_NOTIFY__` | `none`/`ntfy`/`discord`/`slack`/`webhook` for approval alerts. |
 | Attack sim | `ADEPT_ATTACK__` | Atomic allow-list + Caldera URL/key/ids; safe by default. |
-| Agent | `ADEPT_AGENT__` | MCP URL/token, model override, history DB, audit log, `dangerous_tools`. |
+| Agent | `ADEPT_AGENT__` | MCP URL/token, model override, history DB, audit log, `dangerous_tools`, and the **output-guardrail** toggles (`lint_enabled`, `eval_enabled`, `eval_max_retries`, `llm_judge_enabled`, `spl_denylist`). |
 | Observability | `ADEPT_OTEL__` | Optional OTLP/HTTP tracing. |
 
 ### The settings you must get right
@@ -541,7 +629,8 @@ Inside a chat:
 
 When a specialist calls a gated tool, an approval panel appears; answer
 `approve` / `edit` / `reject` / `changes`. Progress is rendered live (which
-specialist was delegated to and which tools it used) instead of raw HTTP traffic.
+specialist was delegated to, which tools it used, and whether the automated
+review passed, asked for a revision, or escalated) instead of raw HTTP traffic.
 
 The valid specialist names for `@mentions` are: `hunt_analyst`, `rule_author`,
 `coverage_strategist`, `deployment_operator`, `purple_team`.
@@ -650,6 +739,9 @@ Each tool carries an MCP annotation — `READ_ONLY` (33 tools), `LOW_RISK_WRITE`
 (3: `write_sigma_rule`, `git_create_branch`, `git_commit`), or `DESTRUCTIVE` (5:
 the gated tools). The agent's approval gate gates anything not read-only-or-safe;
 the default `dangerous_tools` list is exactly the five `DESTRUCTIVE` tools.
+Independently of the gate, the agent's **submit-time lint middleware** vets a
+tool call's arguments before it runs and refuses illegal input (see
+[§3 Output guardrails](#output-guardrails--the-evaluator)).
 
 **Resources — 5:** `ade://taxonomy` (Adversarial Detection Engineering taxonomy),
 `homelab://architecture` (your architecture document), `siem://targets` (enabled
@@ -668,7 +760,8 @@ ADEPT/
 │   ├── mcp_server/        # FastMCP server: auth, context, resources, siem/ backends, tools/
 │   │   ├── siem/          #   ELK / OpenSearch / Splunk backends behind one interface
 │   │   └── tools/         #   The 7 tool groups + annotations
-│   ├── agent/             # LangGraph supervisor + 5 specialists, approval gate, audit, history, chat CLI
+│   ├── agent/             # LangGraph supervisor + 5 specialists, evaluator node, approval gate, audit, history, chat CLI
+│   ├── guardrails/        # Deterministic offline linters (SPL/Lucene/Sigma/Navigator/git) backing the evaluator + lint middleware
 │   ├── detection_as_code/ # Sigma convert / validate / unit-test / backtest / git lifecycle + CLI
 │   ├── intel/             # NVD, CISA KEV, MITRE ATT&CK (STIX), security news, SSRF-guarded HTTP
 │   ├── coverage/          # ATT&CK matrix, Navigator, gaps, overlaps, field baselines, optional DeTT&CT
@@ -678,7 +771,7 @@ ADEPT/
 ├── sigma_rules/           # The bootstrapped detection-rules repo (rules, pipelines, tests, metadata)
 ├── data/                  # Runtime: SQLite history, audit log, Chroma store, intel cache (auto-created)
 ├── docs/                  # Technical, workflow, architecture, and code-review guides
-├── tests/                 # 179 offline tests across 12 files
+├── tests/                 # 200+ offline tests across 14 files
 ├── .env.example           # Fully annotated configuration template
 ├── SETUP_CHECKLIST.md     # Ordered operator go-live runbook
 ├── Makefile               # Developer task runner (thin uv wrappers)
@@ -697,7 +790,8 @@ ADEPT/
 | `adept/coverage` | Coverage matrix, Navigator layers, gap/overlap analysis, field baselines, and the `adept-coverage` CLI. |
 | `adept/kb` | RAG over ATT&CK and local docs; `adept-kb` CLI. |
 | `adept/attack` | Atomic Red Team (propose-only) and Caldera v2 client. |
-| `adept/agent` | Supervisor + specialists, approval gate, audit log, SQLite history, and the `adept` chat CLI. |
+| `adept/agent` | Supervisor + specialists, evaluator (critic) node, approval gate, audit log, SQLite history, and the `adept` chat CLI. |
+| `adept/guardrails` | Pure, offline linters (SPL, Lucene, Sigma, Navigator, git) returning a uniform lint report; backs the evaluator node and the submit-time lint middleware. Depends only on `detection_as_code` + `shared`. |
 | `adept/eval` | Deterministic golden-case eval and the live scenario harness. |
 
 ---
@@ -714,6 +808,12 @@ ADEPT brokers powerful capabilities, so security is layered:
   deploy/disable/delete and Caldera run/stop — interrupts for explicit human
   approval (approve / edit / reject / request-changes). Atomic Red Team is
   propose-only and never executed by ADEPT.
+- **Deterministic output guardrails.** Offline linters vet every agent-generated
+  artifact (SPL/Lucene queries, Sigma rules, Navigator layers, git ops); a
+  submit-time lint middleware refuses illegal tool inputs (e.g. SPL piping into
+  `| delete`, commits to a protected branch) *before* they run, and an evaluator
+  node bounces blocking issues back to the specialist to fix — so a model slip
+  cannot ship a destructive query or a malformed rule.
 - **Least privilege.** SIEM credentials are per-backend and should be scoped to
   the minimum needed; each specialist only receives the MCP tools for its role.
 - **SSRF defence.** Outbound intel fetches are restricted to a configurable host
@@ -740,17 +840,24 @@ ADEPT brokers powerful capabilities, so security is layered:
 
 ```bash
 make check          # ruff + mypy (strict) + pytest  — the CI gate
-uv run pytest -q    # the 179-test offline suite directly
+uv run pytest -q    # the full offline suite directly
 make eval           # deterministic golden-case detection eval
 ```
 
 The verification philosophy is **"prove it runs"**: every referenced package and
 API is exercised by tests or a smoke run, which guards against hallucinated
 dependencies. The suite is fully offline — Ollama, the MCP server, and Caldera are
-mocked — so it runs in CI without external services. The component eval
-(`adept-eval rules`) adds a detection-quality regression on top of unit and
-integration tests; the scenario eval (`adept-eval scenarios`) exercises the live
-agent end to end.
+mocked — so it runs in CI without external services. The deterministic output
+guardrails have their own unit suite (`tests/test_guardrails.py`), and the agent
+tests drive the evaluator regenerate/escalate loop and the lint middleware
+end-to-end with a scripted model. The component eval (`adept-eval rules`) adds a
+detection-quality regression on top of unit and integration tests; the scenario
+eval (`adept-eval scenarios`) exercises the live agent end to end.
+
+The suite is offline by design, so connecting ADEPT to your real homelab is
+validated separately with the staged
+[`docs/live_integration_smoke_test.md`](docs/live_integration_smoke_test.md)
+runbook — one real backend at a time, with cleanup steps for anything it creates.
 
 ---
 
@@ -821,6 +928,15 @@ afterwards), or pass `--bundle <path>` to a local copy.
 
 ## 17. What's new
 
+- **Deterministic output guardrails + evaluator loop.** A new `adept/guardrails`
+  library lints every agent-generated artifact (SPL/Lucene, Sigma, Navigator
+  layers, git ops). A submit-time **lint middleware** refuses illegal tool inputs
+  before they run, and a dedicated **evaluator (critic) node** bounces blocking
+  output back to the same specialist to regenerate (bounded retries, then
+  escalates to you). Both are config-gated (`agent.lint_enabled` /
+  `agent.eval_enabled`, on by default) with an optional LLM judge
+  (`agent.llm_judge_enabled`, off by default). Specialist prompts gained a shared
+  guardrail preamble so the model self-corrects first.
 - **`@specialist` routing override.** Start a chat message with `@<name>` (e.g.
   `@hunt_analyst search the SIEM for X`) to force the first hop to a specific
   specialist. The override is one-shot — normal routing resumes after that hop,
@@ -850,3 +966,6 @@ This README is self-contained. For deeper dives, the `docs/` folder has:
   (fill it in for your environment).
 - [`SETUP_CHECKLIST.md`](SETUP_CHECKLIST.md) — the ordered operator go-live
   runbook.
+- [`docs/live_integration_smoke_test.md`](docs/live_integration_smoke_test.md) —
+  staged manual validation that ADEPT talks to your real SIEMs, Caldera, and
+  intel feeds (the live counterpart to the offline test suite).

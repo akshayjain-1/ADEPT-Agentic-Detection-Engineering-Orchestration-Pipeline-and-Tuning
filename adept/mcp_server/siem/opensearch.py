@@ -62,7 +62,7 @@ class OpenSearchBackend(SiemBackend):
         kwargs: dict[str, Any] = {
             "hosts": [self._settings.url],
             "verify_certs": self._settings.verify_certs,
-            "http_auth": (self._settings.username, self._settings.password),
+            "http_auth": (self._settings.username, self._settings.password.get_secret_value()),
             "timeout": SEARCH_REQUEST_TIMEOUT,
         }
         if self._settings.ca_cert:
