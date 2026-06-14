@@ -22,14 +22,8 @@ Everything runs locally: inference is served by [Ollama](https://ollama.com/),
 your logs and detections never leave the homelab, and the only outbound traffic
 is an optional, allow-listed set of threat-intel fetches.
 
-> **Status:** the platform build is complete and verified **offline** — the full
-> `ruff` + `mypy --strict` + `pytest` (200+ tests) gate is green and every
-> dependency is exercised by tests or a smoke run. Connecting it to your live
-> SIEMs, Ollama, and Caldera is configuration-driven.
->
 > **Maturity:** the ELK/Kibana path is the most exercised. The other SIEM
-> backends (Wazuh/OpenSearch, Splunk) and the optional integrations (DeTT&CT
-> coverage, OpenTelemetry tracing) are wired and unit-tested but less
+> backends (Wazuh/OpenSearch, Splunk) and the optional integrations are wired and unit-tested but less
 > battle-tested against live systems — validate them with the staged
 > [live-integration smoke test](docs/live_integration_smoke_test.md) before you
 > rely on them.
