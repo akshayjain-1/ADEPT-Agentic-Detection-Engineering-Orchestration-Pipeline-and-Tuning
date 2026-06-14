@@ -52,7 +52,6 @@ async def test_build_server_registers_tools(
         "identify_coverage_gaps",
         "find_rule_overlaps",
         "profile_field_baseline",
-        "dettect_generate_layer",
         "search_knowledge_base",
         "knowledge_base_status",
         "list_atomic_tests",

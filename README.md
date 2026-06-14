@@ -463,7 +463,7 @@ $EDITOR .env
 | SIEM — Splunk | `ADEPT_SPLUNK__` | Host/port, token or user-pass, scheme, index. |
 | Sigma repo | `ADEPT_SIGMA__` | Rules path, default/protected branches, optional remote. |
 | Threat intel | `ADEPT_INTEL__` | NVD key, feeds, cache TTLs, and the **SSRF allow-list**. |
-| Coverage | `ADEPT_COVERAGE__` | Baseline lookback + optional external DeTT&CT. |
+| Coverage | `ADEPT_COVERAGE__` | Baseline lookback window for SIEM field profiling. |
 | Knowledge base | `ADEPT_KB__` | Chroma path, collection, embed model, optional SigmaHQ ingest. |
 | Notifications | `ADEPT_NOTIFY__` | `none`/`ntfy`/`discord`/`slack`/`webhook` for approval alerts. |
 | Attack sim | `ADEPT_ATTACK__` | Atomic allow-list + Caldera URL/key/ids; safe by default. |
@@ -674,7 +674,6 @@ activation needed) and, where a `Makefile` target exists, via `make`.
 | `adept-coverage gaps` | `[rules_dir]` · `--bundle` · `--platform` (repeatable) · `--tactic` (repeatable) · `--limit <n>` (default 40) | List prioritised uncovered techniques. |
 | `adept-coverage overlap` | `[rules_dir]` · `--min-similarity <0-1>` (default 0.6) | Find candidate duplicate/overlapping rules. |
 | `adept-coverage baseline` | `--field <name>` (repeatable, required) · `--siem` · `--index` · `--lookback-days <n>` (default 7) · `--top-n <n>` (default 10) | Profile SIEM field volume/cardinality to anticipate noisy detections. |
-| `adept-coverage dettect` | `<mode {ds,v,d}>` · `<yaml_file>` | Generate a Navigator layer via the optional DeTT&CT bridge. |
 
 ### `adept-eval` — evaluation harness
 
@@ -701,7 +700,7 @@ activation needed) and, where a `Makefile` target exists, via `make`.
 
 ## 11. MCP tools & resources
 
-The server registers **41 tools** in seven groups and **5 resources**. Tools
+The server registers **40 tools** in seven groups and **5 resources**. Tools
 marked **gated** are state-changing and pass through the agent's human-approval
 gate; **propose-only** tools render a plan but never execute it.
 
@@ -718,9 +717,8 @@ gate; **propose-only** tools render a plan but never execute it.
 **Threat intelligence — 5:** `lookup_cve`, `search_cves`, `get_kev`,
 `get_attack_technique`, `fetch_security_news`.
 
-**Coverage — 6:** `build_coverage_matrix`, `export_navigator_layer`,
-`identify_coverage_gaps`, `find_rule_overlaps`, `profile_field_baseline`,
-`dettect_generate_layer`.
+**Coverage — 5:** `build_coverage_matrix`, `export_navigator_layer`,
+`identify_coverage_gaps`, `find_rule_overlaps`, `profile_field_baseline`.
 
 **Knowledge base — 2:** `search_knowledge_base`, `knowledge_base_status`.
 
@@ -729,7 +727,7 @@ gate; **propose-only** tools render a plan but never execute it.
 `list_caldera_operations`, `get_caldera_operation_report`,
 `run_caldera_operation` *(gated)*, `stop_caldera_operation` *(gated)*.
 
-Each tool carries an MCP annotation — `READ_ONLY` (33 tools), `LOW_RISK_WRITE`
+Each tool carries an MCP annotation — `READ_ONLY` (32 tools), `LOW_RISK_WRITE`
 (3: `write_sigma_rule`, `git_create_branch`, `git_commit`), or `DESTRUCTIVE` (5:
 the gated tools). The agent's approval gate gates anything not read-only-or-safe;
 the default `dangerous_tools` list is exactly the five `DESTRUCTIVE` tools.
@@ -758,7 +756,7 @@ ADEPT/
 │   ├── guardrails/        # Deterministic offline linters (SPL/Lucene/Sigma/Navigator/git) backing the evaluator + lint middleware
 │   ├── detection_as_code/ # Sigma convert / validate / unit-test / backtest / git lifecycle + CLI
 │   ├── intel/             # NVD, CISA KEV, MITRE ATT&CK (STIX), security news, SSRF-guarded HTTP
-│   ├── coverage/          # ATT&CK matrix, Navigator, gaps, overlaps, field baselines, optional DeTT&CT
+│   ├── coverage/          # ATT&CK matrix, Navigator, gaps, overlaps, field baselines
 │   ├── kb/                # Retrieval-augmented knowledge base (Chroma + Ollama embeddings)
 │   ├── attack/            # Atomic Red Team (propose-only) + MITRE Caldera client
 │   └── eval/              # Offline golden-case eval + LLM scenario harness
@@ -778,7 +776,7 @@ ADEPT/
 | --- | --- |
 | `adept/config` | Typed settings from environment / `.env`. Every other module takes a `Settings`. |
 | `adept/shared` | Structured logging (with secret redaction), TTL disk cache, token-bucket rate limiters, typed errors, notifications, optional OpenTelemetry. |
-| `adept/mcp_server` | The only component that brokers SIEMs, the Sigma repo, intel, KB, and attack sim. Auth, app context, 41 tools, 5 resources. |
+| `adept/mcp_server` | The only component that brokers SIEMs, the Sigma repo, intel, KB, and attack sim. Auth, app context, 40 tools, 5 resources. |
 | `adept/detection_as_code` | Sigma conversion, validation, TP/FP unit tests, event matcher, backtest, git lifecycle, and the `adept-dac` CLI. |
 | `adept/intel` | Threat intelligence with caching, rate limiting, and an SSRF allow-list. |
 | `adept/coverage` | Coverage matrix, Navigator layers, gap/overlap analysis, field baselines, and the `adept-coverage` CLI. |
@@ -818,8 +816,8 @@ ADEPT brokers powerful capabilities, so security is layered:
   before being used in filesystem paths (no traversal); Caldera operation states
   are checked against an allow-set; Sigma is parsed, never `eval`'d; pipeline
   paths are containment-checked.
-- **Safe defaults.** YAML is parsed with `safe_load`; subprocess calls (DeTT&CT,
-  the approval editor) use argument lists with no shell; no weak hashes,
+- **Safe defaults.** YAML is parsed with `safe_load`; subprocess calls (the
+  approval editor) use argument lists with no shell; no weak hashes,
   `pickle`, or dynamic code execution. Secrets are redacted from logs and never
   committed (`.env` is git-ignored).
 - **Auditability.** Approvals and executed tools are appended to a JSONL audit
@@ -915,7 +913,6 @@ afterwards), or pass `--bundle <path>` to a local copy.
 | **Caldera** | MITRE's automated adversary-emulation platform; ADEPT can drive operations behind the approval gate. |
 | **RAG / knowledge base** | Retrieval-augmented generation: a Chroma vector store the agents search for grounding context. |
 | **HITL** | Human-in-the-loop — the approval gate before any state-changing action. |
-| **DeTT&CT** | An optional, external (GPL-3.0) tool for ATT&CK data-source scoring; invoked as a process, never imported. |
 | **Specialist / supervisor** | The five role-scoped agents and the lightweight router that delegates to them. |
 
 ---

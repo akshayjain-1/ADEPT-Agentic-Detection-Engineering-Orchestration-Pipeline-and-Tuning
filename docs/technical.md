@@ -92,7 +92,7 @@ Every package below is implemented and exercised by the test suite.
 | `adept/mcp_server` | The FastMCP server: app context, auth, SIEM backends, Sigma repo, and all tools/resources. |
 | `adept/detection_as_code` | Sigma conversion, validation, TP/FP unit tests, event matcher, backtest, git lifecycle, CLI. |
 | `adept/intel` | Threat intelligence: NVD CVEs, CISA KEV, MITRE ATT&CK (STIX), security-news feeds, SSRF-guarded HTTP. |
-| `adept/coverage` | ATT&CK coverage matrix, Navigator layers, gap analysis, rule-overlap detection, field baselines, optional DeTT&CT. |
+| `adept/coverage` | ATT&CK coverage matrix, Navigator layers, gap analysis, rule-overlap detection, field baselines. |
 | `adept/kb` | Retrieval-augmented knowledge base (Chroma + Ollama embeddings) over ATT&CK and local docs. |
 | `adept/attack` | Atomic Red Team (propose-only) and MITRE Caldera v2 client for adversary emulation. |
 | `adept/guardrails` | Deterministic, offline linters (SPL, Lucene, Sigma, Navigator, git) returning a uniform lint report; backs the evaluator node and the submit-time lint middleware. Depends only on `detection_as_code` + `shared`. |
@@ -106,7 +106,7 @@ packages never import `mcp_server` at runtime. `guardrails` depends only on
 
 ## 5. MCP tool & resource reference
 
-The server registers **41 tools** in seven groups and **5 resources**. Tools
+The server registers **40 tools** in seven groups and **5 resources**. Tools
 marked **gated** are state-changing and pass through the agent's human-approval
 gate before executing.
 
@@ -124,8 +124,7 @@ gate before executing.
 `get_attack_technique`, `fetch_security_news`.
 
 **Coverage:** `build_coverage_matrix`, `export_navigator_layer`,
-`identify_coverage_gaps`, `find_rule_overlaps`, `profile_field_baseline`,
-`dettect_generate_layer`.
+`identify_coverage_gaps`, `find_rule_overlaps`, `profile_field_baseline`.
 
 **Knowledge base:** `search_knowledge_base`, `knowledge_base_status`.
 
@@ -286,7 +285,7 @@ source of truth. The settings groups are:
 | SIEMs | `ADEPT_ELK__`, `ADEPT_OPENSEARCH__`, `ADEPT_SPLUNK__` | Per-SIEM enable flag, endpoint, credentials, index. |
 | Intel | `ADEPT_INTEL__` | NVD key, feeds, cache, host allowlist. |
 | Knowledge base | `ADEPT_KB__` | Chroma path, collection, embedding model. |
-| Coverage | `ADEPT_COVERAGE__` | Optional DeTT&CT integration. |
+| Coverage | `ADEPT_COVERAGE__` | Baseline lookback window for SIEM field profiling. |
 | Attack sim | `ADEPT_ATTACK__` | Atomic path/allow-list, Caldera URL/key/ids. |
 | Agent | `ADEPT_AGENT__` | MCP URL/token, model, history DB, audit log, dangerous-tools list, and the output-guardrail toggles (`lint_enabled`, `eval_enabled`, `eval_max_retries`, `llm_judge_enabled`, `spl_denylist`). |
 | Observability | `ADEPT_OTEL__` | Optional OTLP tracing. |
@@ -341,8 +340,8 @@ ADEPT brokers powerful capabilities, so security is layered:
 - **Input validation at boundaries.** ATT&CK technique ids are regex-validated
   before being used in filesystem paths (no traversal); Caldera operation states
   are checked against an allow-set; Sigma is parsed, never `eval`'d.
-- **Safe defaults.** YAML is parsed with `safe_load`; subprocess calls (DeTT&CT,
-  the approval editor) use argument lists with no shell; no weak hashes,
+- **Safe defaults.** YAML is parsed with `safe_load`; subprocess calls (the
+  approval editor) use argument lists with no shell; no weak hashes,
   `pickle`, or dynamic code execution are used. Secrets are never logged.
 - **Auditability.** Approvals and executed tools are appended to a JSONL audit
   log for after-the-fact review.

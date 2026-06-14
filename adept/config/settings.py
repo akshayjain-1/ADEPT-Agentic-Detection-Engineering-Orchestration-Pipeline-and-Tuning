@@ -141,24 +141,10 @@ class IntelSettings(BaseModel):
 
 
 class CoverageSettings(BaseModel):
-    """ATT&CK coverage analysis and the optional DeTT&CT integration.
-
-    The native coverage tools (matrix/Navigator/gaps/overlap/baseline) always
-    work. DeTT&CT (GPL-3.0) is optional and invoked only as an external process
-    (never imported); when it is not enabled or not found, callers degrade
-    gracefully to a "not available" result.
-    """
+    """ATT&CK coverage analysis settings."""
 
     # Default lookback window for SIEM field baseline profiling.
     baseline_lookback_days: int = 7
-    # Optional best-effort DeTT&CT integration.
-    dettect_enabled: bool = False
-    # Path to the DeTT&CT ``dettect.py`` script, or a ``dettect`` executable on PATH.
-    dettect_command: str = ""
-    # Python interpreter used to run ``dettect.py`` (defaults to the current one).
-    dettect_python: str = ""
-    # Timeout (seconds) for a single DeTT&CT invocation.
-    dettect_timeout_seconds: int = 180
 
 
 class KBSettings(BaseModel):

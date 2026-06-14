@@ -2,13 +2,12 @@
 
 These back the Coverage Strategist agent: a technique coverage matrix derived
 from the local Sigma ruleset, an importable ATT&CK Navigator layer, prioritised
-detection gaps, overlapping/duplicate-rule detection, SIEM field baselines for
-noise estimation, and an optional best-effort DeTT&CT bridge.
+detection gaps, overlapping/duplicate-rule detection, and SIEM field baselines
+for noise estimation.
 """
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -18,7 +17,6 @@ from adept.coverage import (
     build_coverage_matrix,
     build_navigator_layer,
     find_overlaps,
-    generate_layer,
     identify_gaps,
     load_rules,
     profile_fields,
@@ -137,15 +135,3 @@ def register_coverage_tools(mcp: FastMCP, ctx: AppContext) -> None:
         except AdeptError as exc:
             raise ToolError(str(exc)) from exc
         return report.model_dump()
-
-    @mcp.tool(title="Generate a DeTT&CT layer (optional)", annotations=READ_ONLY)
-    def dettect_generate_layer(mode: str, yaml_path: str) -> dict[str, object]:
-        """Generate an ATT&CK Navigator layer via DeTT&CT (external, best-effort).
-
-        ``mode`` is ``ds`` (data sources), ``v`` (visibility), or ``d``
-        (detection); ``yaml_path`` is the DeTT&CT YAML administration file. If
-        DeTT&CT is not enabled or not installed, returns ``available: false``
-        instead of failing.
-        """
-        result = generate_layer(ctx.settings.coverage, mode, yaml_path)
-        return dataclasses.asdict(result)

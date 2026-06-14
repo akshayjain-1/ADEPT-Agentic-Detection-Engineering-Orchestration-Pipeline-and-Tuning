@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from adept.config.settings import CoverageSettings
 from adept.coverage import (
     AttackCatalog,
     RuleInfo,
@@ -18,13 +17,10 @@ from adept.coverage import (
     build_navigator_layer,
     extract_attack_tags,
     find_overlaps,
-    generate_layer,
     identify_gaps,
-    is_available,
     load_rules,
     profile_fields,
 )
-from adept.coverage.dettect import _resolve_command
 from adept.mcp_server.siem._lucene import build_terms_aggregation, parse_terms_aggregation
 from adept.mcp_server.siem.models import FieldAggregation
 
@@ -301,30 +297,4 @@ def test_parse_terms_aggregation_maps_response() -> None:
     ]
 
 
-# --------------------------------------------------------------------------- #
-# DeTT&CT (disabled / unavailable paths)
-# --------------------------------------------------------------------------- #
-def test_dettect_disabled_is_not_available() -> None:
-    settings = CoverageSettings(dettect_enabled=False)
-    assert is_available(settings) is False
-    result = generate_layer(settings, "ds", "whatever.yaml")
-    assert result.available is False
-    assert "disabled" in result.message
 
-
-def test_dettect_unknown_mode_is_rejected() -> None:
-    settings = CoverageSettings(dettect_enabled=True, dettect_command="")
-    result = generate_layer(settings, "bogus", "whatever.yaml")
-    assert result.available is True
-    assert "unknown DeTT&CT mode" in result.message
-
-
-def test_dettect_resolves_script_path(tmp_path: Path) -> None:
-    script = tmp_path / "DeTTECT" / "dettect.py"
-    script.parent.mkdir(parents=True)
-    script.write_text("# stub\n", encoding="utf-8")
-    resolved = _resolve_command(CoverageSettings(dettect_enabled=True, dettect_command=str(script)))
-    assert resolved is not None
-    argv, cwd = resolved
-    assert argv[-1] == str(script)
-    assert cwd == script.parent

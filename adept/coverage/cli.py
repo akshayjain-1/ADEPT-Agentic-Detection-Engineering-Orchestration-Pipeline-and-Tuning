@@ -1,9 +1,9 @@
 """``adept-coverage`` — standalone ATT&CK coverage CLI.
 
 Build a coverage matrix, export an ATT&CK Navigator layer, list prioritised
-gaps, find overlapping rules, profile SIEM field baselines, and drive the
-optional DeTT&CT bridge — all without the agent or MCP server. The same library
-functions back the MCP coverage tools, so CLI and agent behaviour stay aligned.
+gaps, find overlapping rules, and profile SIEM field baselines — all without
+the agent or MCP server. The same library functions back the MCP coverage tools,
+so CLI and agent behaviour stay aligned.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from adept.coverage import (
     build_coverage_matrix,
     build_navigator_layer,
     find_overlaps,
-    generate_layer,
     identify_gaps,
     load_rules,
     profile_fields,
@@ -205,24 +204,6 @@ def baseline(
             profile.note,
         )
     console.print(table)
-
-
-@app.command()
-def dettect(
-    mode: Annotated[str, typer.Argument(help="DeTT&CT mode: ds, v, or d.")],
-    yaml_file: Annotated[Path, typer.Argument(help="DeTT&CT YAML administration file.")],
-) -> None:
-    """Generate an ATT&CK Navigator layer via DeTT&CT (optional, best-effort)."""
-    result = generate_layer(get_settings().coverage, mode, yaml_file)
-    if not result.available:
-        err_console.print(f"[yellow]DeTT&CT not available:[/yellow] {result.message}")
-        raise typer.Exit(code=1)
-    if not result.ok:
-        err_console.print(f"[red]DeTT&CT failed:[/red] {result.message}")
-        if result.stderr_tail:
-            err_console.print(result.stderr_tail)
-        raise typer.Exit(code=1)
-    console.print(f"[green]OK[/green] — generated layer(s): {result.layer_files or '<none found>'}")
 
 
 if __name__ == "__main__":  # pragma: no cover
