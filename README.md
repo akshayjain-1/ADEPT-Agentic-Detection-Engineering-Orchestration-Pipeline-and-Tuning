@@ -654,7 +654,7 @@ activation needed) and, where a `Makefile` target exists, via `make`.
 
 | Command | Arguments / options | Purpose |
 | --- | --- | --- |
-| `adept-dac convert` | `<rule_file>` · `--siem {elk,opensearch,splunk}` (default `elk`) · `--pipeline <name|path>` (repeatable) | Convert a Sigma rule to a SIEM query language. |
+| `adept-dac convert` | `<rule_file>` · `--siem {elk,opensearch,splunk}` (default `elk`) · `--pipeline <name>` (repeatable) | Convert a Sigma rule to a SIEM query language. |
 | `adept-dac validate` | `<rule_file>` | Validate a Sigma rule; non-zero exit on error. |
 | `adept-dac test` | `<file-or-dir>` | Run TP/FP sample-event unit tests; non-zero exit on failure. |
 
