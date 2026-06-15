@@ -97,7 +97,7 @@ Every package below is implemented and exercised by the test suite.
 | `adept/attack` | Atomic Red Team (propose-only) and MITRE Caldera v2 client for adversary emulation. |
 | `adept/guardrails` | Deterministic, offline linters (SPL, Lucene, Sigma, Navigator, git) returning a uniform lint report; backs the evaluator node and the submit-time lint middleware. Depends only on `detection_as_code` + `shared`. |
 | `adept/agent` | The LangGraph supervisor + specialist agents, the evaluator (critic) node, human-approval gate, audit log, SQLite history, CLI chatbot. |
-| `adept/eval` | Offline golden-case component eval and the LLM-in-the-loop scenario harness. |
+| `adept/eval` | Offline TP/FP unit-test runner for Sigma rules (`adept-eval rules`) and the LLM-in-the-loop scenario harness. |
 
 The runtime import direction is one-way: `mcp_server` depends on the domain
 packages (`detection_as_code`, `intel`, `coverage`, `kb`, `attack`); those
@@ -246,9 +246,9 @@ detection quality:
 5. **Hand off** any needed tuning to `rule_author` via the supervisor, which
    revises and backtests the rule.
 
-The offline component evaluator (`adept-eval rules`) anchors this loop with a
-deterministic regression: golden `(rule, events)` cases are scored with the real
-Sigma matcher into a precision/recall report, with no model involved.
+The offline rule unit tests (`adept-eval rules`) anchor this loop with a
+deterministic regression: TP/FP sample events from `sigma_rules/tests/` are
+run through the real Sigma matcher, with no model involved.
 
 ## 9. Setup & installation
 
@@ -296,7 +296,7 @@ source of truth. The settings groups are:
 make mcp     # start the MCP server          (adept-mcp)
 make agent   # start the agent chatbot       (adept)
 make dac     # detection-as-code CLI         (adept-dac)
-make eval    # offline detection-quality eval (adept-eval rules)
+make eval    # offline Sigma rule unit tests (adept-eval rules)
 ```
 
 The project installs six console scripts (each also runnable as `uv run <name>`):
@@ -350,7 +350,7 @@ ADEPT brokers powerful capabilities, so security is layered:
 
 ```bash
 make check   # ruff + mypy (strict) + pytest
-make eval    # deterministic golden-case detection eval
+make eval    # Sigma rule TP/FP unit tests (adept-eval rules)
 ```
 
 The verification philosophy is "prove it runs": every referenced package and API
@@ -360,5 +360,6 @@ and Caldera are mocked — so it runs in CI without external services (202 tests
 across 14 files). The deterministic guardrails have a dedicated unit suite
 (`tests/test_guardrails.py`), and the agent tests drive the evaluator
 regenerate/escalate loop and the lint middleware end-to-end with a scripted
-model. The component eval (`adept-eval rules`) adds a detection-quality
-regression on top of unit and integration tests.
+model. The rule unit tests (`adept-eval rules`) add a detection-quality
+regression on top of unit and integration tests by running TP/FP samples
+from `sigma_rules/tests/`.
