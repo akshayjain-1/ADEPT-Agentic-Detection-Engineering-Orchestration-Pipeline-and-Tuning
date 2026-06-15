@@ -375,12 +375,12 @@ flowchart LR
 
 ### 4.5 Offline detection-quality evaluation
 
-`adept-eval rules` runs deterministic *golden* `(rule, events)` cases through the
-real Sigma matcher into a precision/recall/F1 report — **no model involved** — so
-you have a regression test for detection quality. `adept-eval scenarios` drives
-the live agent through four LLM-in-the-loop rubrics (routing, tool selection, the
-approval gate, and the propose-only purple-team loop), auto-rejecting every
-approval so nothing destructive runs.
+`adept-eval rules` runs the TP/FP unit tests from `sigma_rules/tests/` against
+the local Sigma rule files — **no model involved** — giving you a regression test
+for detection quality. `adept-eval scenarios` drives the live agent through four
+LLM-in-the-loop rubrics (routing, tool selection, the approval gate, and the
+propose-only purple-team loop), auto-rejecting every approval so nothing
+destructive runs.
 
 ---
 
@@ -504,7 +504,7 @@ flowchart TD
     Models --> Inst[uv sync the right extras per host]
     Inst --> Cfg[cp .env.example .env, edit per host]
     Cfg --> Data[git init sigma_rules · adept-kb ingest]
-    Data --> Verify[make check · adept-eval rules]
+    Data --> Verify[make check · adept-eval rules (sigma_rules/tests/)]
     Verify --> Online[Ollama → MCP server → agent chat]
     Online --> Test[Read-only request → author rule → gated deploy]
     Test --> Done([ADEPT is live])
@@ -595,7 +595,7 @@ uv run adept-dac convert sigma_rules/rules/my_rule.yml --siem elk
 uv run adept-dac test sigma_rules/tests/
 uv run adept-coverage matrix                          # needs the ATT&CK bundle / intel extra
 uv run adept-kb search "lateral movement over SMB"    # needs Ollama for embeddings
-uv run adept-eval rules                               # fully offline, no model/network
+uv run adept-eval rules                               # TP/FP unit tests, fully offline
 ```
 
 ---
@@ -679,7 +679,7 @@ activation needed) and, where a `Makefile` target exists, via `make`.
 
 | Command | Arguments / options | Purpose |
 | --- | --- | --- |
-| `adept-eval rules` | — | Offline golden-case detection-quality eval (no model/network). |
+| `adept-eval rules` | `[tests_dir]` (default `sigma_rules/tests`) | Offline TP/FP unit tests for Sigma rules (no model/network). |
 | `adept-eval scenarios` | `--auto-approve` (reserved) | LLM-in-the-loop scenarios against the live agent (Ollama + MCP); auto-rejects every approval gate. |
 
 ### `make` targets (developer convenience)
@@ -690,7 +690,7 @@ activation needed) and, where a `Makefile` target exists, via `make`.
 | `make check` | `ruff check` → `mypy adept` → `pytest` | The CI gate. |
 | `make lint` / `make format` / `make typecheck` / `make test` | individual `uv run` steps | The gate, piecewise. |
 | `make mcp` / `make agent` | `uv run adept-mcp` / `uv run adept` | Start the server / chatbot. |
-| `make dac` / `make eval` | `uv run adept-dac --help` / `uv run adept-eval rules` | The standalone CLIs. |
+| `make dac` / `make eval` | `uv run adept-dac --help` / `uv run adept-eval rules` | The standalone CLIs (eval runs TP/FP unit tests). |
 | `make clean` | remove caches/build artifacts | Housekeeping. |
 
 > If `uv` warns about a `VIRTUAL_ENV` mismatch (another project's venv is active),
@@ -842,9 +842,9 @@ dependencies. The suite is fully offline — Ollama, the MCP server, and Caldera
 mocked — so it runs in CI without external services. The deterministic output
 guardrails have their own unit suite (`tests/test_guardrails.py`), and the agent
 tests drive the evaluator regenerate/escalate loop and the lint middleware
-end-to-end with a scripted model. The component eval (`adept-eval rules`) adds a
-detection-quality regression on top of unit and integration tests; the scenario
-eval (`adept-eval scenarios`) exercises the live agent end to end.
+end-to-end with a scripted model. The rule unit tests (`adept-eval rules`) add a
+detection-quality regression on top of unit and integration tests by running
+TP/FP samples from `sigma_rules/tests/`; the scenario eval (`adept-eval scenarios`) exercises the live agent end to end.
 
 The suite is offline by design, so connecting ADEPT to your real homelab is
 validated separately with the staged

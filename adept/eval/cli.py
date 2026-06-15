@@ -1,27 +1,29 @@
 """``adept-eval`` — run ADEPT's evaluation harness.
 
-``adept-eval rules`` runs the offline, deterministic component eval (golden Sigma
-cases scored with the real matcher) and is safe to run anywhere — no model or
-network needed. ``adept-eval scenarios`` runs the LLM-in-the-loop scenarios
-against the live agent (Ollama + MCP); every approval gate is auto-rejected so
-nothing destructive executes.
+``adept-eval rules`` runs TP/FP unit tests from ``sigma_rules/tests/`` against
+the local Sigma rule files and is safe to run anywhere — no model or network
+needed. ``adept-eval scenarios`` runs the LLM-in-the-loop scenarios against the
+live agent (Ollama + MCP); every approval gate is auto-rejected so nothing
+destructive executes.
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from adept.eval.golden import DEFAULT_CASES, run_component_eval
-from adept.eval.models import EvalReport, ScenarioResult
+from adept.detection_as_code.models import UnitTestReport
+from adept.detection_as_code.unit_tests import run_test_file
+from adept.eval.models import ScenarioResult
 
 app = typer.Typer(
     name="adept-eval",
-    help="Run ADEPT's component and scenario evaluations.",
+    help="Run ADEPT's unit-test and scenario evaluations.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -29,33 +31,36 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _render_report(report: EvalReport) -> None:
-    table = Table(title="Component evaluation (golden detection cases)")
-    table.add_column("Technique")
-    table.add_column("Case")
-    for column in ("TP", "FN", "FP", "TN"):
-        table.add_column(column, justify="right")
-    table.add_column("Precision", justify="right")
-    table.add_column("Recall", justify="right")
-    table.add_column("F1", justify="right")
+def _render_unit_tests(reports: list[UnitTestReport]) -> None:
+    table = Table(title="Sigma rule unit tests (TP/FP)")
+    table.add_column("Rule")
+    table.add_column("Total", justify="right")
+    table.add_column("Passed", justify="right")
+    table.add_column("Failed", justify="right")
     table.add_column("Result")
-    for case in report.cases:
+    for report in reports:
         table.add_row(
-            case.technique,
-            case.name,
-            str(case.true_positives),
-            str(case.false_negatives),
-            str(case.false_positives),
-            str(case.true_negatives),
-            f"{case.precision:.2f}",
-            f"{case.recall:.2f}",
-            f"{case.f1:.2f}",
-            "[green]pass[/green]" if case.passed else "[red]FAIL[/red]",
+            report.rule,
+            str(report.total),
+            str(report.passed),
+            str(report.failed),
+            "[green]pass[/green]" if report.ok else "[red]FAIL[/red]",
         )
+        for case in report.cases:
+            if not case.passed:
+                table.add_row(
+                    f"  [dim]{case.name}[/dim]",
+                    "",
+                    "",
+                    "",
+                    f"[red]expected {'match' if case.expected_match else 'no match'}[/red]",
+                )
     console.print(table)
+    total_cases = sum(r.total for r in reports)
+    total_passed = sum(r.passed for r in reports)
+    rules_ok = sum(1 for r in reports if r.ok)
     console.print(
-        f"cases {report.passed_cases}/{report.total_cases} passed · "
-        f"precision {report.precision:.2f} · recall {report.recall:.2f} · f1 {report.f1:.2f}"
+        f"rules {rules_ok}/{len(reports)} passed · cases {total_passed}/{total_cases}"
     )
 
 
@@ -81,11 +86,35 @@ def _render_scenarios(results: list[ScenarioResult]) -> None:
 
 
 @app.command("rules")
-def rules() -> None:
-    """Run the offline golden-case component evaluation."""
-    report = run_component_eval(DEFAULT_CASES)
-    _render_report(report)
-    raise typer.Exit(code=0 if report.ok else 1)
+def rules(
+    tests_dir: Annotated[
+        Path,
+        typer.Argument(help="Directory containing sigma test YAML files."),
+    ] = Path("sigma_rules/tests"),
+) -> None:
+    """Run TP/FP unit tests from sigma_rules/tests/ (fully offline)."""
+    from adept.shared.errors import AdeptError
+
+    tests_path = tests_dir.resolve()
+    if not tests_path.is_dir():
+        err_console.print(f"[red]tests directory not found:[/red] {tests_path}")
+        raise typer.Exit(code=2)
+
+    test_files = sorted(tests_path.glob("*.yml"))
+    if not test_files:
+        err_console.print(f"[yellow]no test files found in[/yellow] {tests_path}")
+        raise typer.Exit(code=0)
+
+    reports: list[UnitTestReport] = []
+    for path in test_files:
+        try:
+            reports.append(run_test_file(path))
+        except AdeptError as exc:
+            err_console.print(f"[red]{path.name}:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+
+    _render_unit_tests(reports)
+    raise typer.Exit(code=0 if all(r.ok for r in reports) else 1)
 
 
 @app.command("scenarios")

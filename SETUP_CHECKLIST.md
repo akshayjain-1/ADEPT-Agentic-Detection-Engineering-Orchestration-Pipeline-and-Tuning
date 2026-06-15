@@ -138,7 +138,7 @@ On the Ollama host, with the server running:
 ## 7. Verify offline
 
 - [ ] Run the gate: `uv run pytest -q` (or `make check` for ruff + mypy + pytest).
-- [ ] Run the detection-quality eval: `uv run adept-eval rules` (expect 3/3 golden cases pass).
+- [ ] Run the detection-quality eval: `uv run adept-eval rules` (runs TP/FP unit tests from `sigma_rules/tests/`).
 
 ---
 
@@ -180,7 +180,7 @@ On the Ollama host, with the server running:
 | `uv run adept-dac` | Standalone detection-as-code CLI (convert / validate / test). |
 | `uv run adept-kb` | Knowledge-base `ingest` / `search` / `info`. |
 | `uv run adept-coverage` | ATT&CK coverage matrix / gaps / overlaps. |
-| `uv run adept-eval rules` | Offline detection-quality evaluation. |
+| `uv run adept-eval rules` | Offline TP/FP unit tests for Sigma rules. |
 
 > **Troubleshooting:** if `uv` warns about a `VIRTUAL_ENV` mismatch (e.g. another
 > project's venv is active in your shell), prefix the command with

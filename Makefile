@@ -36,7 +36,7 @@ agent: ## Run the agent CLI chatbot
 dac: ## Run the detection-as-code CLI
 	uv run adept-dac --help
 
-eval: ## Run the offline detection-quality evaluation (golden cases)
+eval: ## Run the offline detection-quality evaluation (sigma rule unit tests)
 	uv run adept-eval rules
 
 clean: ## Remove caches and build artifacts
