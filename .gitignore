@@ -49,6 +49,3 @@ audit/
 .idea/
 *.swp
 .DS_Store
-
-# ---- Local-only docs ----
-docs/code_review_guide.md
